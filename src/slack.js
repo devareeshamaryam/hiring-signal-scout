@@ -16,78 +16,17 @@ function awardsLines(s) {
   return lines;
 }
 
-function hiringLines(s) {
-  const lines = ['*👤 Hiring managers* (Apollo, for the biggest new winners)'];
-  if (s.error) return [...lines, `⚠️ ${escape(s.error)}`];
-  lines.push(`Companies looked up: *${s.companies}*    Contacts found: *${s.added.length}*`);
-  for (const p of s.added.slice(0, MAX_LISTED)) {
-    const who = p.linkedin ? `<${p.linkedin}|${escape(p.name)}>` : escape(p.name);
-    lines.push(`• ${who} – ${escape(p.title)} @ ${escape(p.company)}${p.email ? ` – ${p.email}` : ''} _(won: ${escape(p.award.title.slice(0, 60))})_`);
-  }
-  return lines;
-}
-
-function buildReport({ date, awards, hiring, sheetUrl }) {
+function buildReport({ date, awards, sheetUrl }) {
   const lines = [`*TenderScout – who won IT contracts – ${date}*`, '', ...awardsLines(awards)];
-  if (hiring) lines.push('', ...hiringLines(hiring));
   if (sheetUrl) lines.push('', `<${sheetUrl}|Open Google Sheet>`);
   return lines.join('\n');
 }
 
-const num = (n) => new Intl.NumberFormat('en-GB').format(n);
-
-function hiringAlertLine(a) {
-  const facts = [];
-  if (a.reasons.includes('spike')) facts.push(`engineering roles *${a.baseline} → ${a.openEng}*`);
-  else facts.push(`${a.openEng} open engineering roles`);
-  if (a.newEng) facts.push(`${a.newEng} new eng jobs in 7 days`);
-  if (a.hotStacks.length) facts.push(`stacks: ${a.hotStacks.slice(0, 4).map(([s, n]) => `${escape(s)} ×${n}`).join(', ')}`);
-  const jobs = a.latest.map((j) => (j.url ? `<${j.url}|${escape(j.title.slice(0, 60))}>` : escape(j.title.slice(0, 60))));
+// Hiring signal bot: just the hiring manager's name and email per ramping-up company.
+function buildManagersAlert({ date, contacts }) {
   return [
-    `• *<${a.careersUrl}|${escape(a.company)}>* (${a.ats}) – ${facts.join(' · ')}`,
-    ...(jobs.length ? [`    ↳ ${jobs.join(', ')}`] : []),
-  ].join('\n');
-}
-
-function buildHiringReport({ date, alerts, firstRun, baselined, newJobs, polled, perAts = [], openJobs, openEng, newCompanies, notFound, errors, sheetUrl }) {
-  const lines = [`*TenderScout – hiring velocity – ${date}*`, ''];
-  if (firstRun) {
-    lines.push(`📥 Initial load: baselined *${baselined}* companies. Alerts start as new jobs are posted (spike alerts after 3 days of history).`);
-  } else if (alerts.length) {
-    lines.push(`📈 Companies ramping up engineering hiring: *${alerts.length}*`);
-    lines.push(...alerts.slice(0, MAX_LISTED).map(hiringAlertLine));
-    if (alerts.length > MAX_LISTED) lines.push(`…and ${alerts.length - MAX_LISTED} more`);
-  } else {
-    lines.push('No hiring spikes today.');
-  }
-  const split = perAts.length > 1 ? ` (${perAts.map(([ats, n]) => `${ats} ${n}`).join(', ')})` : '';
-  lines.push('', `Companies tracked: *${polled}*${split}    Open jobs: *${num(openJobs)}* (engineering ${num(openEng)})    New jobs today: *${num(newJobs)}*`);
-  if (newCompanies) lines.push(`🔎 ${newCompanies} new hiring companies found and added to tracking`);
-  if (!firstRun && baselined) lines.push(`➕ ${baselined} companies baselined (first poll, alerts from tomorrow)`);
-  if (notFound.length) lines.push(`⚠️ Careers page no longer found: ${escape(notFound.join(', '))}`);
-  if (errors.length) lines.push(`⚠️ ${errors.length} companies failed: ${escape(errors.slice(0, 3).join('; '))}`);
-  if (sheetUrl) lines.push('', `<${sheetUrl}|Open Google Sheet>`);
-  return lines.join('\n');
-}
-
-// One proposal draft per message, so each can be reviewed (and copied) on its own.
-function buildProposal({ signal, contact, proposal }) {
-  const why = signal.kind === 'award'
-    ? `🏆 *${escape(signal.company)}* won <${signal.award.url}|${escape(signal.award.title.slice(0, 100))}> – ${escape(signal.award.buyer)} – ${gbp(signal.award.valueGbp)}`
-    : `📈 *<${signal.alert.careersUrl}|${escape(signal.company)}>* (${signal.alert.ats}) – ${signal.alert.baseline != null ? `engineering roles ${signal.alert.baseline} → ${signal.alert.openEng}` : `${signal.alert.openEng} open engineering roles`}${signal.alert.newEng ? ` · ${signal.alert.newEng} new in 7 days` : ''}`;
-  const to = contact
-    ? [
-      `*${escape(contact.name || 'Unknown name')}* – ${escape(contact.title || '')}`,
-      contact.email ? `${contact.email}${contact.emailStatus ? ` (${contact.emailStatus})` : ''}` : 'no email',
-      contact.linkedin ? `<${contact.linkedin}|LinkedIn>` : '',
-    ].filter(Boolean).join(' – ')
-    : '_No contact found – find the hiring manager before sending_';
-  return [
-    '✍️ *Proposal draft – review before sending (nothing has been sent)*',
-    why,
-    `*To:* ${to}`,
-    `*Subject:* ${escape(proposal.subject)}`,
-    proposal.body.split('\n').map((line) => `> ${escape(line)}`).join('\n'),
+    `*TenderScout – hiring managers – ${date}*`,
+    ...contacts.map((c) => `• ${escape(c.company)}: *${escape(c.name || 'Unknown name')}* – ${c.email || 'no email'}`),
   ].join('\n');
 }
 
@@ -104,4 +43,4 @@ async function post(webhookUrl, text) {
   if (!res.ok) throw new Error(`Slack ${res.status}: ${await res.text()}`);
 }
 
-module.exports = { buildReport, buildHiringReport, buildProposal, post };
+module.exports = { buildReport, buildManagersAlert, post };

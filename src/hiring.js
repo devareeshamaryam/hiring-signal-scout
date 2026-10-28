@@ -1,7 +1,7 @@
 // TenderScout hiring velocity: which companies are ramping up engineering hiring.
 // Find hiring companies (Workable, Lever) -> their job feeds -> classify jobs -> Google Sheet
-// (companies, jobs) -> spike / burst / stack rules -> Slack summary
-// -> (optional) Apollo hiring manager + Claude-drafted proposal per ramping-up company, to Slack.
+// (companies, jobs) -> spike / burst / stack rules
+// -> (optional) Apollo hiring manager per ramping-up company -> Slack (name + email).
 
 const config = require('./config');
 const workable = require('./sources/workable');
@@ -12,7 +12,7 @@ const { detect, daysAgo } = require('./velocity');
 const { sleep } = require('./http');
 const sheets = require('./sheets');
 const slack = require('./slack');
-const outreach = require('./outreach');
+const apollo = require('./apollo');
 
 // Job feed per ATS (the "ATS" column in the sheet).
 const SOURCES = Object.fromEntries([workable, lever].map((s) => [s.name, s]));
@@ -155,20 +155,42 @@ async function track(conn, companies, today) {
   await sheets.appendRows(jobsTab, newJobRows);
   alerts.sort((a, b) => (b.newEng + b.openEng - (b.baseline ?? b.openEng)) - (a.newEng + a.openEng - (a.baseline ?? a.openEng)));
   console.log(`Hiring: ${newJobs} new jobs, ${baselined} companies baselined, ${alerts.length} alerts`);
-  // stats are saved by main() once the proposal drafts are known.
+  // stats are saved by main() once the hiring-manager lookups are known.
   return { alerts, stats, newJobs, baselined, firstRun: companies.every((c) => !c.history.length) };
 }
 
-// One proposal draft per ramping-up company, at most once per PROPOSAL_COOLDOWN_DAYS.
-async function draftProposals(alerts, stats, today) {
-  const since = daysAgo(today, config.proposalCooldownDays);
-  const signals = alerts
+// The likely hiring manager (Apollo) per ramping-up company, at most once per
+// CONTACT_COOLDOWN_DAYS (recorded in the Last Proposal column) to save credits.
+async function findManagers(alerts, stats, today) {
+  if (!config.apolloApiKey) {
+    console.log('APOLLO_API_KEY not set - skipping hiring-manager lookup');
+    return { contacts: [], errors: [] };
+  }
+  const since = daysAgo(today, config.contactCooldownDays);
+  const picked = alerts
     .filter((a) => !a.lastProposal || a.lastProposal < since)
-    .map((alert) => ({ kind: 'hiring', company: alert.company, alert, lookup: true }));
-  if (!signals.length) return null;
-  const drafts = await outreach.run(signals);
-  for (const d of drafts?.drafted || []) stats.get(d.signal.alert.key).proposed = true;
-  return drafts;
+    .slice(0, config.contactsPerRun);
+  const contacts = [];
+  const errors = [];
+  for (const alert of picked) {
+    try {
+      const { people } = await apollo.findHiringManagers(config.apolloApiKey, alert.company, {
+        titles: config.apolloTitles, perCompany: 1,
+      });
+      stats.get(alert.key).proposed = true;
+      if (people[0]) contacts.push({ company: alert.company, ...people[0] });
+    } catch (err) {
+      // Plan/key problems affect every lookup - stop and report once.
+      if (/API_INACCESSIBLE|401|403/.test(err.message)) {
+        errors.push(`Apollo API not available on this plan/key (${err.message.slice(0, 120)})`);
+        break;
+      }
+      // Not recorded, so it's retried next run.
+      console.error(`Apollo lookup failed for ${alert.company}:`, err.message.slice(0, 120));
+    }
+  }
+  console.log(`Hiring managers: ${picked.length} companies looked up, ${contacts.length} contacts found`);
+  return { contacts, errors };
 }
 
 async function main() {
@@ -207,22 +229,22 @@ async function main() {
 
   const result = await track(conn, companies, today);
 
-  await slack.post(config.slackWebhookUrl, slack.buildHiringReport({
-    date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-    ...result,
-    ...totals,
-    sheetUrl: `https://docs.google.com/spreadsheets/d/${config.hiringSheetId}`,
-  }));
-
-  let drafts = null;
+  // Slack gets only the hiring managers' names and emails; the full numbers stay in the sheet.
+  let managers = null;
   try {
-    drafts = await draftProposals(result.alerts, result.stats, today);
-    if (drafts?.errors.length) await slack.post(config.slackWebhookUrl, `⚠️ Proposal drafts: ${drafts.errors.join('; ')}`);
+    managers = await findManagers(result.alerts, result.stats, today);
+    if (managers.contacts.length) {
+      await slack.post(config.slackWebhookUrl, slack.buildManagersAlert({
+        date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        contacts: managers.contacts,
+      }));
+    }
+    if (managers.errors.length) await slack.post(config.slackWebhookUrl, `⚠️ Hiring managers: ${managers.errors.join('; ')}`);
   } finally {
     await companiesFinder.saveStats(conn, result.stats, today);
   }
 
-  if (errors.length || drafts?.errors.length) process.exitCode = 1;
+  if (errors.length || managers?.errors.length) process.exitCode = 1;
 }
 
 main().catch(async (err) => {

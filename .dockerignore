@@ -1,0 +1,17 @@
+# Secrets: pass these as Cloud Run env vars / Secret Manager instead.
+.env
+.env.*
+service-account*.json
+
+# Installed inside the image.
+node_modules
+
+# Not needed at runtime.
+.git
+.gitignore
+.github
+scripts
+logs
+*.md
+Dockerfile
+.dockerignore

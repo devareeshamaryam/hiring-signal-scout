@@ -9,10 +9,9 @@ TenderScout – who won IT contracts – 07 Oct 2026
 • KPMG LLP; ERNST & YOUNG LLP won Centralised Civil Service Learning… – Cabinet Office (Find a Tender) – ≈£380m
 • Neit Consulting s.r.o. won Czechia – IT services: consulting… – MPSV (TED, CZE) – ≈£139m
 …
-
-👤 Hiring managers (Apollo, for the biggest new winners)
-• Jane Doe – Head of Talent Acquisition @ MRI Software – jane@… (won: Homeswapper software)
 ```
+
+Apollo hiring managers for the biggest new winners go to the **Hiring Managers** tab only; Slack gets the contract alert.
 
 ## Sources (all public APIs, no key needed)
 
@@ -61,11 +60,8 @@ A second daily job (`npm run hiring`) watches **which companies are ramping up e
 If a job site rate-limits the search, the run still polls the companies it already tracks.
 
 ```
-TenderScout – hiring velocity – 07 Oct 2026
-
-📈 Companies ramping up engineering hiring: 2
-• Zopa (Lever) – engineering roles 10 → 16 · 6 new eng jobs in 7 days · stacks: kotlin ×4, aws ×3
-    ↳ Senior Backend Engineer, Android Engineer, Platform Engineer
+TenderScout – hiring managers – 07 Oct 2026
+• Zopa: Jane Doe – jane@zopa.com
 ```
 
 A company is reported when something relevant was posted **today** and at least one of these is true:
@@ -89,27 +85,21 @@ npm run hiring:dry-run        # search + up to 10 new companies, writes nothing:
 npm run hiring                # real run: sheet + Slack
 ```
 
-## Proposal drafts (Claude, optional)
+## Hiring managers in Slack (Apollo, optional)
 
-When a signal fires, TenderScout drafts one tailored outreach email for the likely hiring manager and posts it to Slack. **Nothing is emailed automatically.** A person reviews each draft and decides whether to send it. Human approval is deliberate: PECR (UK), PDPA (Singapore) and PDPO (Hong Kong) allow targeted, relevant B2B outreach with an easy opt-out, while automated bulk sending gets domains blacklisted.
+For each company ramping up hiring, the hiring bot looks up the best-ranked `APOLLO_TITLES` person in Apollo (1 credit for the company + 1 for the contact) and posts only their **name and email** to Slack. Nothing is posted on days with no contact found.
 
-| Signal | Contact | Where |
-|---|---|---|
-| New contract award (one draft per new winner, biggest first) | The hiring manager Apollo found for that winner, if any | `npm start` |
-| Company ramping up hiring (spike / burst / stack) | Apollo lookup of the best-ranked `APOLLO_TITLES` person (1 credit for the company + 1 for the contact) | `npm run hiring` |
+- **Limits:** at most `CONTACTS_PER_RUN` (20) companies per run. A company is looked up at most once every `CONTACT_COOLDOWN_DAYS` (30), recorded in the **Last Proposal** column of Hiring Companies.
+- **Skipped when `APOLLO_API_KEY` is not set.**
 
-- **Model:** Claude Opus 5.5 (`claude-opus-5-5`) via the official `@anthropic-ai/sdk`, returning `{subject, body}` as structured JSON. Server-side refusal fallback is on.
-- **Drafts reference only facts from the signal** (contract title, buyer, value; or engineering roles before → now, new jobs, stacks). Claude is told never to invent clients or results, and only claims what `PROPOSAL_SENDER_PROFILE` says you offer. **Set that profile to your real offering.**
-- **Every draft ends with an opt-out line**, is 90–150 words, and has one low-pressure call to action.
-- **Limits:** at most `PROPOSALS_PER_RUN` (20) drafts per job run. A ramping-up company gets at most one draft every `PROPOSAL_COOLDOWN_DAYS` (30), recorded in the **Last Proposal** column of Hiring Companies. The first tender run (initial load) drafts nothing.
-- **Skipped entirely when `ANTHROPIC_API_KEY` is not set.** Without Apollo, drafts are still written and the Slack message says "No contact found".
+Both bots post to the same `SLACK_WEBHOOK_URL`.
 
 ## Code
 
 ```
 src/
   index.js                    fetch awards → filter → sheet → Apollo → Slack
-  hiring.js                   tracked companies → job feeds → jobs/snapshots in sheet → spike alerts → Slack
+  hiring.js                   tracked companies → job feeds → jobs/snapshots in sheet → spike alerts → Apollo hiring manager → Slack
   velocity.js                 spike / burst / stack rules
   companies.js                finds companies to track (Hiring Companies tab)
   sources/workable.js         Workable job feeds + job search
@@ -122,8 +112,6 @@ src/
   filter.js                   keyword / CPV matching
   fx.js                       approximate currency → GBP rates
   apollo.js                   Apollo company/people search + enrichment
-  proposals.js                Claude drafts one tailored proposal (subject + body) per signal
-  outreach.js                 signal → Apollo contact → Claude draft → Slack (capped per run)
   sheets.js                   Google Sheets helpers
   slack.js                    Slack message
   http.js                     request helper (retries rate limits and network errors)

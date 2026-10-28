@@ -1,7 +1,6 @@
 // TenderScout: daily "who won IT contracts" report.
 // Award notices from Contracts Finder, Find a Tender and TED -> filter -> Google Sheet
-// -> (optional) Apollo hiring-manager lookup -> Slack summary
-// -> (optional) Claude-drafted proposal per new winner, posted to Slack for review.
+// -> (optional) Apollo hiring-manager lookup (sheet only) -> Slack contract alert.
 
 const config = require('./config');
 const contractsFinder = require('./sources/contractsFinder');
@@ -12,7 +11,6 @@ const { toGbp } = require('./fx');
 const apollo = require('./apollo');
 const sheets = require('./sheets');
 const slack = require('./slack');
-const outreach = require('./outreach');
 
 const AWARD_HEADERS = [
   'Source', 'Notice ID', 'Award Date', 'Supplier(s)', 'Buyer', 'Title', 'Value',
@@ -140,30 +138,14 @@ async function main() {
     }
   }
 
+  // Slack gets the contract alert only; hiring managers stay in the sheet.
   await slack.post(config.slackWebhookUrl, slack.buildReport({
     date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
     awards: awardsResult,
-    hiring,
     sheetUrl: `https://docs.google.com/spreadsheets/d/${config.sheetId}`,
   }));
 
-  // One proposal draft per new award winner (biggest first), using the contact Apollo found
-  // above. The initial load is skipped: those awards aren't news.
-  let drafts = null;
-  if (!awardsResult.firstRun && awardsResult.added.length) {
-    const seen = new Set();
-    const signals = awardsResult.added.map((a) => {
-      const company = a.suppliers.split('; ')[0];
-      if (!company || seen.has(company.toLowerCase())) return null;
-      seen.add(company.toLowerCase());
-      const contact = (hiring?.added || []).find((p) => p.award.id === a.id && p.company) || null;
-      return { kind: 'award', company, award: a, contact, lookup: false };
-    }).filter(Boolean);
-    drafts = await outreach.run(signals);
-    if (drafts?.errors.length) await slack.post(config.slackWebhookUrl, `⚠️ Proposal drafts: ${drafts.errors.join('; ')}`);
-  }
-
-  if (errors.length || hiring?.error || drafts?.errors.length) process.exitCode = 1;
+  if (errors.length || hiring?.error) process.exitCode = 1;
 }
 
 main().catch(async (err) => {
